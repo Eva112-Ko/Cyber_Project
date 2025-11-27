@@ -1,0 +1,95 @@
+# my first protocol
+
+import socket
+import logging
+import struct
+
+
+# prepare Log file
+log_file_path = 'Log.log'
+logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Open the log file in write mode, which truncates the file to zero length
+with open(log_file_path, 'w'):
+    pass  # This block is empty intentionally
+
+SERVER_HOST: str = "0.0.0.0"
+CLIENT_HOST: str = "127.0.0.1"
+DISCONNECT_MSG: str = "EXIT"
+
+
+
+def check_valid_cmd(data_DNA) -> bool(int):
+    data_DNA = data_DNA.upper()
+    for i in range(len(data_DNA)):
+        if not data_DNA[i] in 'ATCG':
+            return False
+    return True
+
+def create_request_msg(data):
+    """Create a valid protocol message, will be sent by client, with length field"""
+    request = ""
+    if check_valid_cmd(data):
+        request = "04" + data
+
+    return request
+
+def create_response_msg_for_collected_data(cmd: str) -> str:
+    response = "Non-supported cmd"
+    if check_valid_cmd(cmd):
+        response = "Data saved successfully"
+    elif cmd == DISCONNECT_MSG:
+        response = "Exit request accepted"
+    
+    response = f"{len(response):04d}{response}"
+    return response
+
+def receive_msg(my_socket: socket) -> (bool,str):
+    """Extract message from protocol, without the length field
+       If length field does not include a number, returns False, "Error" """
+    str_header = my_socket.recv(4).decode('utf-8')
+    length = int(str_header)
+    if length > 0:
+        buf = my_socket.recv(length).decode('utf-8')
+    else:
+        return False, "Error"
+
+    return True, buf
+
+# for server
+def recv_image(sock): # receive image from client
+    # Receive 4-byte binary length (big-endian integer)
+    length_bytes = sock.recv(4)
+    img_size = struct.unpack(">I", length_bytes)[0]
+
+    # Receive the image bytes
+    data = b""
+    while len(data) < img_size:
+        chunk = sock.recv(img_size - len(data))
+        data += chunk
+    return data
+
+# for client
+def send_image(sock, filepath):
+    with open(filepath, "rb") as f:
+        img_bytes = f.read()
+
+    # Send image length (4-byte big-endian)
+    sock.send(struct.pack(">I", len(img_bytes)))
+
+    # Send image bytes
+    sock.send(img_bytes)
+
+
+def get_cmd_and_args(buf: str) -> (str, list):
+    """Returns the command from buffer"""
+    split_request = buf.split('>')
+    cmd = split_request[0]
+    args = []
+    if len(split_request) > 1:
+        args = split_request[1].split('<')
+    return cmd, args
+
+
+def write_to_log(msg):
+    logging.info(msg)
+    print(msg)
