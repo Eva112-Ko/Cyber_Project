@@ -1,0 +1,120 @@
+from protocol import *
+import os
+import socket # imports Python’s built-in socket library, for communication between computers over a network
+
+HOST = '0.0.0.0' # host of server we use for connection, that allows server to liten on all network interfaces (any device may connect)
+PORT = 5001 # set port number, that server will listen on
+BUFFER_SIZE = 4096 # size of the file in bytes (every chunk)
+SAVE_PATH = 'received__01_NETWORKS.pdf' # specifies the name and location of the file (will be saved)
+
+with socket.socket() as s: # with connection to socket as s (creates a new socket object, automatically closes when done)
+    s.bind((HOST, PORT)) # binds the socket to the specified host and port, os will listen for connections on that network address
+    s.listen(1) # socket is in listening mode, accepts incoming connections (socket will allow one connection before refusing others)
+    print(f"[*] Listening on {HOST}:{PORT}") # prints if server is waiting for connections
+    conn, addr = s.accept() # returns a new socket object for the connection nd client's address
+    with conn: # creates a new socket object, automatically closes when done
+        print(f"[+] Connected by {addr}") # prints the client's address
+        with open(SAVE_PATH, 'wb') as f: # opens a new file in binary write mode
+            while True: # loop received data from client, reads up to BUFFER_SIZE bytes,
+                # if data is empty, it means client finished sending and the loop stopes, data chunks is written to the file
+                data = conn.recv(BUFFER_SIZE)
+                if not data:
+                    break
+                f.write(data)
+        print("[+] File received.") # prints a message if full file has been received and saved
+
+
+
+def send_protocol_msg(sock, text):
+    msg = f"{len(text):>2}{text}"
+    sock.send(msg.encode())
+
+def recv_protocol_msg(sock):
+    header = sock.recv(2).decode()
+    length = int(header)
+    return sock.recv(length).decode()
+
+def handle_client(client_socket):
+    # step 1: read request
+    request = recv_protocol_msg(client_socket)
+    print(f"Client request: {request}")
+
+    # Parse: REQUEST_IMAGES|folderName|count
+    cmd, folder_name, count_str = request.split("|")
+    img_count = int(count_str)
+
+    # step 2: create folder for this request
+    full_path = os.path.join("saved_sets", folder_name)
+    os.makedirs(full_path, exist_ok=True)
+    print(f"Saving images to: {full_path}")
+
+    # step 3: receive all images
+    for i in range(img_count):
+        img_data = protocol.recv_image(client_socket)
+        filename = os.path.join(full_path, f"image_{i+1}.jpg")
+        with open(filename, "wb") as file:
+            file.write(img_data)
+        print(f"Saved: {filename}")
+
+    # step 4: confirmation
+    send_protocol_msg(client_socket, "Images saved successfully")
+
+    client_socket.close()
+    print("Client disconnected")
+
+
+def main():
+    server_socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    server_socket.bind((HOST,protocol.PORT))
+    server_socket.listen()
+    protocol.write_to_log("[Server] Server is up and running")
+    (client_socket,client_address) = server_socket.accept()
+    protocol.write_to_log("[Server] Client connected")
+
+    while True:
+        response = ''
+        # 1. Get message from socket and check it
+        valid_msg, cmd = protocol.get_msg(client_socket)
+        # 2. Save to log
+        protocol.write_to_log("[Server] received cmd- " + cmd )
+
+        if valid_msg:
+            # 3. If valid command - create response
+            if protocol.check_cmd(cmd):
+                # 4. Create response
+                response = protocol.create_response_msg(cmd)
+            else:
+                response = "Wrong command"
+        else:
+            response = "Wrong protocol"
+            # client_socket.recv(1024)  # Attempt to empty the socket from possible garbage
+
+        # 5. Save to log
+        protocol.write_to_log("[Server] send - " + response)
+
+        # 6. Send response to the client
+        client_socket.send(response.encode())
+
+        # Handle EXIT command, no need to respond to the client
+        if cmd == "EXIT":
+            client_socket.close()
+            protocol.write_to_log("[Server] - closing client socket")
+
+    # for receiving images
+    os.makedirs("saved_sets", exist_ok=True)
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(("0.0.0.0", PORT))
+    server_socket.listen(1)
+    print(f"Server running on port {PORT}")
+
+    while True:
+        client_socket, address = server_socket.accept()
+        print(f"Connected: {address}")
+        handle_client(client_socket)
+
+            
+
+
+if __name__ == "__main__":
+    main()
